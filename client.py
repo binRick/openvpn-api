@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-import os, sys, socket, json, psutil, subprocess
+import os, sys, socket, json, psutil, subprocess, humanize, datetime
 import openvpn_api.vpn
 
+EXTRACT_CONFIG_KEYS = ['dev','ca','key','cert','max-clients','tls-auth','dh']
 SERVERS = {
   'udp': {
 	'sock': '/root/openvpn-management-udp.sock',
 	'pid': None,
 	'log': None,
 	'config': None,
-	'connections': [],
 	'open_files': [],
+	'connections': [],
+	'listens': [],
 
   },
   'tcp': {
@@ -17,62 +19,93 @@ SERVERS = {
 	'pid': None,
 	'log': None,
 	'config': None,
-	'connections': [],
 	'open_files': [],
+	'connections': [],
+	'listens': [],
   },
 }
-
-EXTRACT_CONFIG_KEYS = ['dev','ca','key','cert','max-clients','tls-auth','dh']
-INTERFACES = psutil.net_if_addrs().keys()
 
 for PROTO in SERVERS.keys():
 	for k in EXTRACT_CONFIG_KEYS:
 		SERVERS[PROTO][k] = None
 	O = openvpn_api.VPN(socket=SERVERS[PROTO]['sock'])
-	pids, err = subprocess.Popen(["lsof","-t",SERVERS[PROTO]['sock']], stdout=subprocess.PIPE).communicate()
+	child = subprocess.Popen(["lsof","-t",SERVERS[PROTO]['sock']], stdout=subprocess.PIPE)
+	pids, err = child.communicate()
+	exit_code = child.returncode
+	if exit_code != 0:
+		raise Exception("[{}] Unable to lsof {}".format(PROTO,SERVERS[PROTO]['sock']))
 	pids = pids.decode().strip().split("\n")
 	for pid in pids:
 		if not SERVERS[PROTO]['config']:
 			Process = psutil.Process(int(pid))
 			SERVERS[PROTO]['exe'] = Process.exe()
+			SERVERS[PROTO]['cmdline'] = Process.cmdline()
 			if SERVERS[PROTO]['exe'].endswith("openvpn"):
 				SERVERS[PROTO]['pid'] = int(pid)
-				SERVERS[PROTO]['cmdline'] = Process.cmdline()
 				for w in SERVERS[PROTO]['cmdline']:
 					if w.lower().endswith('.conf'):
 						SERVERS[PROTO]['config'] = w
 				SERVERS[PROTO]['user'] = Process.username()
+				SERVERS[PROTO]['num_threads'] = Process.num_threads()
+				SERVERS[PROTO]['cpu_percent'] = Process.cpu_percent()
+				SERVERS[PROTO]['num_fds'] = Process.num_fds()
+				SERVERS[PROTO]['_connections'] = Process.connections()
+				SERVERS[PROTO]['memory_full_info'] = Process.memory_full_info()
 				for of in Process.open_files():
 					SERVERS[PROTO]['open_files'].append(of.path)
 					if of.path.lower().endswith('.log'):
 						SERVERS[PROTO]['log'] = of.path
+	if not SERVERS[PROTO]['_connections']:
+		raise Exception("[{}] Unable to find connections".format(PROTO))
+	for c in SERVERS[PROTO]['_connections']:
+		if int("{}".format(c.type)) == 2:
+			if c.status == 'NONE':
+				SERVERS[PROTO]['listens'].append("{}:{}".format(c.laddr.ip,c.laddr.port))
+		elif int("{}".format(c.type)) == 1:
+			if c.status == 'ESTABLISHED':
+				SERVERS[PROTO]['connections'].append({
+					"local": "{}:{}".format(c.laddr.ip,c.laddr.port),
+					"remote": "{}:{}".format(c.raddr.ip,c.raddr.port),
+				})
+			elif c.status == 'LISTEN':
+				SERVERS[PROTO]['listens'].append("{}:{}".format(c.laddr.ip,c.laddr.port))
+		
+	if not SERVERS[PROTO]['config'] or not os.path.exists(SERVERS[PROTO]['config']):
+		raise Exception("[{}] Cannot read config {}".format(PROTO, SERVERS[PROTO]['config']))
 	with open(SERVERS[PROTO]['config'],'r') as f:
 		for l in f.read().strip().splitlines():
 			words = ' '.join(l.strip().split(' ')).split()
 			for k in EXTRACT_CONFIG_KEYS:
 				if words and len(words) == 2 and words[0] == k:
 					SERVERS[PROTO][k] = words[1]
-
+	if not SERVERS[PROTO]['dev'] in psutil.net_if_addrs().keys():
+		raise Exception("[{}] Invalid Interface {}".format(PROTO, SERVERS[PROTO]['dev']))
 	with O.connection():
 		S = O.get_status()
 		s = O.get_stats()
 		print("OpenVPN")
 		print("  Protocol: {}".format(PROTO))
 		print("  PID: {}".format("{}".format(SERVERS[PROTO]['pid'])))
+		print("  Started: {}".format(humanize.naturaldate(O.state.up_since)))
+		print("  Listening on: {}".format(SERVERS[PROTO]['listens']))
 		print("  Interface: {}".format("{}".format(SERVERS[PROTO]['dev'])))
+		print("  Connections: {}".format("{}".format(SERVERS[PROTO]['connections'])))
 		print("  exe: {}".format("{}".format(SERVERS[PROTO]['exe'])))
 		print("  User: {}".format("{}".format(SERVERS[PROTO]['user'])))
 		print("  Log: {}".format("{}".format(SERVERS[PROTO]['log'])))
 		print("  CA: {}".format("{}".format(SERVERS[PROTO]['ca'])))
 		print("  Cert: {}".format("{}".format(SERVERS[PROTO]['cert'])))
 		print("  Key: {}".format("{}".format(SERVERS[PROTO]['key'])))
+		print("  Memory (rss): {}".format("{}".format(humanize.naturalsize(SERVERS[PROTO]['memory_full_info'].rss))))
+		print("  cpu_percent: {}".format("{}".format(SERVERS[PROTO]['cpu_percent'])))
+		print("  # Threads: {}".format("{}".format(SERVERS[PROTO]['num_threads'])))
+		print("  # FDs: {}".format("{}".format(SERVERS[PROTO]['num_fds'])))
 		print("  Max Clients: {}".format("{}".format(SERVERS[PROTO]['max-clients'])))
 		print("  Mgmt Socket: {}".format("{}".format(SERVERS[PROTO]['sock'])))
 		print("  Config: {}".format("{}".format(SERVERS[PROTO]['config'])))
 		print("  Open Files: {}".format("{}".format(SERVERS[PROTO]['open_files'])))
 		print("  Version: {}".format(O.version))
 		print("  Release: {}".format(O.release))
-		print("  Running Since: {}".format(O.state.up_since))
 		print("  State: {}".format(O.state.state_name))
 		print("  Local Address: {}".format(O.state.local_virtual_v4_addr))
 		print("  Bytes: {} sent / {} recv".format(s.bytes_out, s.bytes_in))

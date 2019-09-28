@@ -36,6 +36,7 @@ setup(
     install_requires=[
         'netaddr',
         'openvpn_status',
+        'humanize',
         'psutil',
     ],
     project_urls={

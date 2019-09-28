@@ -7,6 +7,7 @@ SERVERS = {
 	'sock': '/root/openvpn-management-udp.sock',
 	'pid': None,
 	'log': None,
+	'config': None,
 	'connections': [],
 	'open_files': [],
 
@@ -15,6 +16,7 @@ SERVERS = {
 	'sock': '/root/openvpn-management-tcp.sock',
 	'pid': None,
 	'log': None,
+	'config': None,
 	'connections': [],
 	'open_files': [],
   },
@@ -27,19 +29,23 @@ for PROTO in SERVERS.keys():
 	for k in EXTRACT_CONFIG_KEYS:
 		SERVERS[PROTO][k] = None
 	O = openvpn_api.VPN(socket=SERVERS[PROTO]['sock'])
-	pid, err = subprocess.Popen(["lsof","-t",SERVERS[PROTO]['sock']], stdout=subprocess.PIPE).communicate()
-	SERVERS[PROTO]['pid'] = int(pid.strip().decode())
-	Process = psutil.Process(SERVERS[PROTO]['pid'])
-	SERVERS[PROTO]['cmdline'] = Process.cmdline()
-	for w in SERVERS[PROTO]['cmdline']:
-		if w.lower().endswith('.conf'):
-			SERVERS[PROTO]['config'] = w
-	SERVERS[PROTO]['exe'] = Process.exe()
-	SERVERS[PROTO]['user'] = Process.username()
-	for of in Process.open_files():
-		SERVERS[PROTO]['open_files'].append(of.path)
-		if of.path.lower().endswith('.log'):
-			SERVERS[PROTO]['log'] = of.path
+	pids, err = subprocess.Popen(["lsof","-t",SERVERS[PROTO]['sock']], stdout=subprocess.PIPE).communicate()
+	pids = pids.decode().strip().split("\n")
+	for pid in pids:
+		if not SERVERS[PROTO]['config']:
+			Process = psutil.Process(int(pid))
+			SERVERS[PROTO]['exe'] = Process.exe()
+			if SERVERS[PROTO]['exe'].endswith("openvpn"):
+				SERVERS[PROTO]['pid'] = int(pid)
+				SERVERS[PROTO]['cmdline'] = Process.cmdline()
+				for w in SERVERS[PROTO]['cmdline']:
+					if w.lower().endswith('.conf'):
+						SERVERS[PROTO]['config'] = w
+				SERVERS[PROTO]['user'] = Process.username()
+				for of in Process.open_files():
+					SERVERS[PROTO]['open_files'].append(of.path)
+					if of.path.lower().endswith('.log'):
+						SERVERS[PROTO]['log'] = of.path
 	with open(SERVERS[PROTO]['config'],'r') as f:
 		for l in f.read().strip().splitlines():
 			words = ' '.join(l.strip().split(' ')).split()

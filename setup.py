@@ -36,6 +36,7 @@ setup(
     install_requires=[
         'netaddr',
         'openvpn_status',
+        'psutil',
     ],
     project_urls={
         'Source': 'https://github.com/Jamie-/openvpn-api',

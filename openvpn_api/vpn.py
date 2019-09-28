@@ -1,7 +1,5 @@
-import logging
-import socket
-import re
-import contextlib
+import logging, socket, re, contextlib
+#import psutil
 import openvpn_status
 import openvpn_api.util as util
 from openvpn_api.util.errors import VPNError, ConnectError, ParseError

@@ -233,3 +233,48 @@ class VPN:
         """
         raw = self.send_command('status 1')
         return openvpn_status.parse_status(raw)
+
+
+    def connected_clients(self):
+        CLIENT_CONNECTIONS = []
+        ROUTES = []
+        SERVER_STATUS = self.get_status()
+        CLIENT_LIST = SERVER_STATUS.client_list
+        ROUTING_TABLE = SERVER_STATUS.routing_table
+        for _R in ROUTING_TABLE:
+            R = ROUTING_TABLE[_R]
+            ROUTE = {
+                "virtual_address": "{}".format(R.virtual_address),
+                "remote": {
+                    "address": "{}".format(R.real_address).split(":")[0],
+                    "port": int("{}".format(R.real_address).split(":")[1]),
+                },
+                "last_ref_human": "{}".format(R.last_ref),
+                "last_ref": int("{}".format(int(R.last_ref.timestamp())))
+            }
+            ROUTES.append(ROUTE)
+        for _C in CLIENT_LIST:
+            C = CLIENT_LIST[_C]
+            if C.common_name != 'UNDEF':
+                CLIENT = {
+                        "common_name": C.common_name,
+                        "remote": {
+                            "address": "{}".format(C.real_address).split(":")[0],
+                            "port": int("{}".format(C.real_address).split(":")[1]),
+                        },
+                        "bytes_received": int("{}".format(int(C.bytes_received))),
+                        "bytes_sent": int("{}".format(int(C.bytes_sent))),
+                        "bytes_received_human": "{}".format(C.bytes_received),
+                        "bytes_sent_human": "{}".format(C.bytes_sent),
+                        "connected_since": int("{}".format(int(C.connected_since.timestamp()))),
+                        "connected_since_human": "{}".format(C.connected_since),
+                }
+                for R in ROUTES:
+                        if R['remote']['address'] == CLIENT['remote']['address'] and R['remote']['port'] == CLIENT['remote']['port']:
+                            CLIENT['virtual_address'] = R['virtual_address']
+                            CLIENT['last_ref_human'] = R['last_ref_human']
+                            CLIENT['last_ref'] = R['last_ref']
+
+                CLIENT_CONNECTIONS.append(CLIENT)
+
+        return CLIENT_CONNECTIONS
